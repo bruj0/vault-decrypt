@@ -32,7 +32,7 @@ func DeserializeKeyring(buf []byte) (*Keyring, error) {
 	// Deserialize the keyring
 	var enc vault.EncodedKeyring
 	if err := jsonutil.DecodeJSON(buf, &enc); err != nil {
-		return nil, fmt.Errorf("deserialization failed: %w", err)
+		return nil, fmt.Errorf("deserialization failed: %s", err)
 	}
 
 	// Create a new keyring

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
 
 	"github.com/davecgh/go-spew/spew"
 	wrapping "github.com/hashicorp/go-kms-wrapping"
@@ -19,16 +20,8 @@ import (
 )
 
 const (
-	version = "0.2"
+	version = "0.3"
 )
-
-var unsealKeys = []string{
-	"iZwzZvh3F49rANs4JqdHbppY23Zbv9UrXtzwUAfeeAoO",
-	"0WZmOXEyBW72R9Uc4uQMJdxazuUmQEKEmXJkEsg82zhq",
-	"hh1Q+SfDLk0+atGZOLEeDkt3nqdDxQhhGVBSQgYDpmqJ",
-	"YSagOWuLqfyZ13KmSfSJV95qCFQrW8oDwEtmNQnLkbDQ",
-	"6wbabZ5czUMOsA+xOlg/VHr/P5wD3+U7bOrWonMZMRiK",
-}
 
 func readStoredKeys(barrierKeys []byte, masterkey []byte) ([]byte, error) {
 	blobInfo := &wrapping.EncryptedBlobInfo{}
@@ -37,7 +30,7 @@ func readStoredKeys(barrierKeys []byte, masterkey []byte) ([]byte, error) {
 	}
 	aeadWrapper, err := getWrapper(masterkey)
 	if err != nil {
-		return nil, fmt.Errorf("getWrapper: %w", err)
+		return nil, fmt.Errorf("getWrapper: %s", err)
 	}
 
 	pt, err := aeadWrapper.Decrypt(context.Background(), blobInfo, nil)
@@ -56,12 +49,12 @@ func readStoredKeys(barrierKeys []byte, masterkey []byte) ([]byte, error) {
 func getBinValue(target string) (ciphertext []byte, err error) {
 	ciphertext, err = ioutil.ReadFile(target)
 	if err != nil {
-		return nil, fmt.Errorf("ReadFile: %w", err)
+		return nil, fmt.Errorf("ReadFile: %s", err)
 	}
 
 	ciphertextBin, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%s", ciphertext))
 	if err != nil {
-		return nil, fmt.Errorf("base64 decoding: %w", err)
+		return nil, fmt.Errorf("base64 decoding: %s", err)
 	}
 	log.Debugf("ciphertextBin: %s", spew.Sdump(ciphertextBin))
 	return ciphertextBin, nil
@@ -75,18 +68,30 @@ func main_() int {
 	keyRingPath := flag.String("key-ring", "tmp/data/core/keyring", "Path to a file with the base64 encrypted value of the keyring")
 	encryptedKeyPath := flag.String("encrypted-file", "", "Path to the file to decrypt")
 	encryptedKeyVaultPath := flag.String("encrypted-vault-path", "", "Logical path inside Vault storage to the key")
+	unsealKeysPath := flag.String("unseal-keys", "", "Path to a file with the unseal keys, one per line")
 	debug := flag.Bool("debug", false, "Enable debug output (optional)")
 	flag.Parse()
 
-	if len(os.Args) < 4 {
+	if len(os.Args) < 10 {
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
-
 	log.SetLevel(log.InfoLevel)
 	if *debug {
 		log.SetLevel(log.DebugLevel)
 	}
+
+	//Read unseal keys from file
+	unsealKeysText, err := ioutil.ReadFile(*unsealKeysPath)
+	if err != nil {
+		log.Fatalf("ReadFile: %s", err)
+		return 1
+	}
+	unsealKeys := strings.Split(string(unsealKeysText), "\n")
+	if unsealKeys[len(unsealKeys)-1] == "" {
+		unsealKeys = unsealKeys[:len(unsealKeys)-1]
+	}
+	log.Debugf("Unseal keys=%s", spew.Sdump(unsealKeys))
 	//Decode base64 shamir keys and combine them
 	var unsealKeysBins [][]byte
 	for _, v := range unsealKeys {

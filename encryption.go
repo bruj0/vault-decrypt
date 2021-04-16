@@ -21,7 +21,7 @@ func getWrapper(key []byte) (*aead.Wrapper, error) {
 	root := aead.NewWrapper(nil)
 	root.SetConfig(map[string]string{"key_id": "root"})
 	if err := root.SetAESGCMKeyBytes(key); err != nil {
-		return nil, fmt.Errorf("SetAESGCMKeyBytes: %w", err)
+		return nil, fmt.Errorf("SetAESGCMKeyBytes: %s", err)
 	}
 	return root, nil
 }
@@ -62,12 +62,12 @@ func decryptTarget(cipher []byte, key []byte, path string) ([]byte, error) {
 
 	aeadKey, err := aeadFromKey(key)
 	if err != nil {
-		return nil, fmt.Errorf("aeadFromKey: %w", err)
+		return nil, fmt.Errorf("aeadFromKey: %s", err)
 
 	}
 	clear, err := decryptInternal(path, aeadKey, cipher)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt: %w", err)
+		return nil, fmt.Errorf("decrypt: %s", err)
 	}
 
 	log.Debugf("Clear=%s", spew.Sdump(clear))
@@ -78,28 +78,28 @@ func decryptTargetWrapped(target string, unsealkey []byte) ([]byte, error) {
 
 	ciphertext, err := ioutil.ReadFile(target)
 	if err != nil {
-		return nil, fmt.Errorf("ReadFile: %w", err)
+		return nil, fmt.Errorf("ReadFile: %s", err)
 	}
 
 	ciphertextBin, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%s", ciphertext))
 	if err != nil {
-		return nil, fmt.Errorf("base64 decoding: %w", err)
+		return nil, fmt.Errorf("base64 decoding: %s", err)
 	}
 	se := &wrapping.EncryptedBlobInfo{}
 	if err := proto.Unmarshal(ciphertextBin, se); err != nil {
-		return nil, fmt.Errorf("proto Unmarshal %w", err)
+		return nil, fmt.Errorf("proto Unmarshal %s", err)
 	}
 
 	log.Debugf("EncryptedBlobInfo:%s", spew.Sdump(se))
 
 	aeadWrapper, err := getWrapper(unsealkey)
 	if err != nil {
-		return nil, fmt.Errorf("ReadFile: %w", err)
+		return nil, fmt.Errorf("ReadFile: %s", err)
 	}
 
 	clear, err := aeadWrapper.Decrypt(context.Background(), se, nil)
 	if err != nil {
-		return nil, fmt.Errorf("aeadWrapper.Decrypt: %w", err)
+		return nil, fmt.Errorf("aeadWrapper.Decrypt: %s", err)
 	}
 	log.Debugf("Clear=%s", spew.Sdump(clear))
 	return clear, nil
