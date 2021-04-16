@@ -102,9 +102,14 @@ func main_() int {
 		}
 		unsealKeysBins = append(unsealKeysBins, tmpBin)
 	}
-	masterKey, err := shamir.Combine(unsealKeysBins)
-	if err != nil {
-		log.Fatalf("failed to generate key from shares: %s", err)
+	var masterKey []byte
+	if len(unsealKeysBins) > 1 {
+		masterKey, err = shamir.Combine(unsealKeysBins)
+		if err != nil {
+			log.Fatalf("failed to generate key from shares: %s", err)
+		}
+	} else {
+		masterKey = unsealKeysBins[0]
 	}
 	log.Debugf("Master key: %s", base64.StdEncoding.EncodeToString(masterKey))
 

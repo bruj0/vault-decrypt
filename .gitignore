@@ -1,4 +1,3 @@
 core.*
 *.bin
 tmp
-vault-decrypt
