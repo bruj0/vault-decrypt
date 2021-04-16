@@ -5,8 +5,7 @@ It currently only works in the open source version of Vault and was tested with 
 # Usage
 
 ```
-❯ ./vault-decrypt
-INFO[0000] Vault-decrypt starting version 0.2
+INFO[0000] Vault-decrypt starting version 0.3
   -barrier-unseal-keys string
         Path to a file with the base64 encrypted value of the barrier unseal keys (default "tmp/data/core/hsm/barrier-unseal-keys")
   -debug
@@ -17,10 +16,12 @@ INFO[0000] Vault-decrypt starting version 0.2
         Logical path inside Vault storage to the key
   -key-ring string
         Path to a file with the base64 encrypted value of the keyring (default "tmp/data/core/keyring")
+  -unseal-keys string
+        Path to a file with the unseal keys, one per line
 
 v ❯ ./vault-decrypt -barrier-unseal-keys tmp/data/core/hsm/barrier-unseal-keys -encrypted-file tmp/data/sys/expire/id/auth/token/create/h6a3062800e8bcf65bf874510eea86e90d1348f672a6805ad9cd458d472a4878f -encrypted-vault-path sys/expire/id/auth/token/create/h6a3062800e8bcf65bf874510eea86e90d1348f672a6805ad9cd458d472a4878f -k
-ey-ring tmp/data/core/keyring
-INFO[0000] Vault-decrypt starting version 0.2
+ey-ring tmp/data/core/keyring -unseal-keys unsealkeys.txt
+INFO[0000] Vault-decrypt starting version 0.3
 INFO[0000] Decrypted data:([]uint8) (len=888 cap=892) {
  00000000  7b 22 6c 65 61 73 65 5f  69 64 22 3a 22 61 75 74  |{"lease_id":"aut|
 ..
