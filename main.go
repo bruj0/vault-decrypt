@@ -1,29 +1,26 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 
 	"github.com/davecgh/go-spew/spew"
 	wrapping "github.com/hashicorp/go-kms-wrapping"
-	"github.com/hashicorp/go-kms-wrapping/wrappers/aead"
+
 	"github.com/hashicorp/vault/shamir"
-	"github.com/hashicorp/vault/vault"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
 
 const (
-	version = "0.1"
+	version = "0.2"
 )
-
-var keyring = "AAAAAQJSY9Nn8nJFtfSvi7Sr80twobxsyNgnH8h/f0kyfFFkH+ipHbgTYublyDAtxrKEDOB8yq8DfRPZJ66wPHpw/vSJfuaX/bnb+9qEL+rnIKSGpnIXMbS1kC/TPaYFYVRlZjDTJ2hOpGcva/4jWlvvpqcrOuwQ2Su4msZ/KmaljKt4IwNv5C+tsA9Eclj6fqUx6TH6uusLX+Su9BN7uMBBatnWX6DyOobDaMsBvYFFKnc4lLaeFQi8JtWIfGPpMr/lTkvl/29LkW/4yIk1TiFVCQ3GDqEkRobGlpSH23DwnYNpmKlaRvquN0vNIS4Hb/a0Lwjd4Rpj0WE8qasDVNFDhSW45ueKUtxyAiuBLBj+AYtHhSDvlAbkJeLEjMRzSnYB4k87FwcRGJRziwrEhkmYtC0="
 
 var unsealKeys = []string{
 	"iZwzZvh3F49rANs4JqdHbppY23Zbv9UrXtzwUAfeeAoO",
@@ -32,66 +29,13 @@ var unsealKeys = []string{
 	"YSagOWuLqfyZ13KmSfSJV95qCFQrW8oDwEtmNQnLkbDQ",
 	"6wbabZ5czUMOsA+xOlg/VHr/P5wD3+U7bOrWonMZMRiK",
 }
-var MasterKey *[]byte
-var UnsealKey *[]byte
 
-func getWrapper(key []byte) (*aead.Wrapper, error) {
-	root := aead.NewWrapper(nil)
-	root.SetConfig(map[string]string{"key_id": "root"})
-	if err := root.SetAESGCMKeyBytes(key); err != nil {
-		return nil, fmt.Errorf("SetAESGCMKeyBytes: %w", err)
-	}
-	return root, nil
-}
-
-func aeadFromKey(key []byte) (cipher.AEAD, error) {
-	aesCipher, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(aesCipher)
-	if err != nil {
-		return nil, err
-	}
-	return gcm, nil
-}
-
-func decryptInternal(path string, gcm cipher.AEAD, ciphertext []byte) ([]byte, error) {
-	// Capture the parts
-	nonce := ciphertext[5 : 5+gcm.NonceSize()]
-	raw := ciphertext[5+gcm.NonceSize():]
-	out := make([]byte, 0, len(raw)-gcm.NonceSize())
-
-	// Attempt to open
-	switch ciphertext[4] {
-	case vault.AESGCMVersion1:
-		return gcm.Open(out, nonce, raw, nil)
-	case vault.AESGCMVersion2:
-		aad := []byte(nil)
-		if path != "" {
-			aad = []byte(path)
-		}
-		return gcm.Open(out, nonce, raw, aad)
-	default:
-		return nil, fmt.Errorf("version bytes mis-match")
-	}
-}
-
-func readStoredKeys() ([]byte, error) {
-	value, err := ioutil.ReadFile("tmp/data/core/hsm/barrier-unseal-keys")
-	if err != nil {
-		return nil, fmt.Errorf("ReadFile: %w", err)
-	}
-	pe, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%s", value))
-	if err != nil {
-		return nil, fmt.Errorf("base64 decoding: %w", err)
-	}
-
+func readStoredKeys(barrierKeys []byte, masterkey []byte) ([]byte, error) {
 	blobInfo := &wrapping.EncryptedBlobInfo{}
-	if err := proto.Unmarshal(pe, blobInfo); err != nil {
+	if err := proto.Unmarshal(barrierKeys, blobInfo); err != nil {
 		return nil, fmt.Errorf("failed to proto decode stored keys: %s", err)
 	}
-	aeadWrapper, err := getWrapper(*MasterKey)
+	aeadWrapper, err := getWrapper(masterkey)
 	if err != nil {
 		return nil, fmt.Errorf("getWrapper: %w", err)
 	}
@@ -109,9 +53,8 @@ func readStoredKeys() ([]byte, error) {
 	return keys[0], nil
 }
 
-func decryptTarget(target string, path string) ([]byte, error) {
-
-	ciphertext, err := ioutil.ReadFile(target)
+func getBinValue(target string) (ciphertext []byte, err error) {
+	ciphertext, err = ioutil.ReadFile(target)
 	if err != nil {
 		return nil, fmt.Errorf("ReadFile: %w", err)
 	}
@@ -121,58 +64,30 @@ func decryptTarget(target string, path string) ([]byte, error) {
 		return nil, fmt.Errorf("base64 decoding: %w", err)
 	}
 	log.Debugf("ciphertextBin: %s", spew.Sdump(ciphertextBin))
-	aeadKey, err := aeadFromKey(*UnsealKey)
-	if err != nil {
-		return nil, fmt.Errorf("aeadFromKey: %w", err)
-
-	}
-	clear, err := decryptInternal(path, aeadKey, ciphertextBin)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt: %w", err)
-	}
-
-	log.Debugf("Clear=%s", spew.Sdump(clear))
-	return clear, nil
-
-}
-func decryptTargetWrapped(target string) ([]byte, error) {
-
-	ciphertext, err := ioutil.ReadFile(target)
-	if err != nil {
-		return nil, fmt.Errorf("ReadFile: %w", err)
-	}
-
-	ciphertextBin, err := base64.StdEncoding.DecodeString(fmt.Sprintf("%s", ciphertext))
-	if err != nil {
-		return nil, fmt.Errorf("base64 decoding: %w", err)
-	}
-	se := &wrapping.EncryptedBlobInfo{}
-	if err := proto.Unmarshal(ciphertextBin, se); err != nil {
-		return nil, fmt.Errorf("proto Unmarshal %w", err)
-	}
-
-	log.Debugf("EncryptedBlobInfo:%s", spew.Sdump(se))
-
-	aeadWrapper, err := getWrapper(*UnsealKey)
-	if err != nil {
-		return nil, fmt.Errorf("ReadFile: %w", err)
-	}
-
-	clear, err := aeadWrapper.Decrypt(context.Background(), se, nil)
-	if err != nil {
-		return nil, fmt.Errorf("aeadWrapper.Decrypt: %w", err)
-	}
-	log.Debugf("Clear=%s", spew.Sdump(clear))
-	return clear, nil
-
+	return ciphertextBin, nil
 }
 func main_() int {
 	log.SetOutput(os.Stdout)
 	log.SetFormatter(&log.TextFormatter{})
-	log.SetLevel(log.DebugLevel)
-	log.Infof("Starting version %s", version)
-	fmt.Printf("keyring=%s\nunsealkeys=%s", spew.Sdump(keyring), spew.Sdump(unsealKeys))
+	log.Infof("Vault-decrypt starting version %s", version)
 
+	barrierUnsealKeysPath := flag.String("barrier-unseal-keys", "tmp/data/core/hsm/barrier-unseal-keys", "Path to a file with the base64 encrypted value of the barrier unseal keys")
+	keyRingPath := flag.String("key-ring", "tmp/data/core/keyring", "Path to a file with the base64 encrypted value of the keyring")
+	encryptedKeyPath := flag.String("encrypted-file", "", "Path to the file to decrypt")
+	encryptedKeyVaultPath := flag.String("encrypted-vault-path", "", "Logical path inside Vault storage to the key")
+	debug := flag.Bool("debug", false, "Enable debug output (optional)")
+	flag.Parse()
+
+	if len(os.Args) < 4 {
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	log.SetLevel(log.InfoLevel)
+	if *debug {
+		log.SetLevel(log.DebugLevel)
+	}
+	//Decode base64 shamir keys and combine them
 	var unsealKeysBins [][]byte
 	for _, v := range unsealKeys {
 		tmpBin, err := base64.StdEncoding.DecodeString(v)
@@ -186,27 +101,62 @@ func main_() int {
 	if err != nil {
 		log.Fatalf("failed to generate key from shares: %s", err)
 	}
-	log.Infof("Master key")
-	fmt.Printf("%s\n", base64.StdEncoding.EncodeToString(masterKey))
+	log.Debugf("Master key: %s", base64.StdEncoding.EncodeToString(masterKey))
 
-	MasterKey = &masterKey
-
-	unsealKey, err := readStoredKeys()
+	//Read barrier unseal key
+	barrierKeys, err := getBinValue(*barrierUnsealKeysPath)
+	if err != nil {
+		log.Fatalf("failed to read file: %s", err)
+		return 1
+	}
+	unsealKey, err := readStoredKeys(barrierKeys, masterKey)
 	if err != nil {
 		log.Fatalf("failed to decrypt unseal keys: %s", err)
 		return 1
 	}
 	log.Debugf("Unseal keys:%s", spew.Sdump(unsealKey))
-	UnsealKey = &unsealKey
 
-	keyRingJSON, err := decryptTarget("tmp/data/core/keyring", "core/keyring")
+	//Read keyring and decrypt it
+	keyRingBin, err := getBinValue(*keyRingPath)
+	if err != nil {
+		log.Fatalf("failed to read file: %s", err)
+		return 1
+	}
+	keyRingJSON, err := decryptTarget(keyRingBin, unsealKey, "core/keyring")
 
 	if err != nil {
 		log.Fatalf("Error decrypting Keyring:%s", err)
 		return 1
 	}
-
 	log.Debugf("Keyring:%s", keyRingJSON)
+	keyring, err := DeserializeKeyring(keyRingJSON)
+	if err != nil {
+		log.Fatalf("failed to generate key from shares: %s", err)
+	}
+
+	log.Debugf("Keyring deserialized:%s", spew.Sdump(keyring))
+
+	//Decrypt with keyring
+	cipherBin, err := getBinValue(*encryptedKeyPath)
+	if err != nil {
+		log.Fatalf("failed to read file: %s", err)
+		return 1
+	}
+	clear, err := decryptWithKeyring(keyring, cipherBin, *encryptedKeyVaultPath)
+	if err != nil {
+		log.Fatalf("failed to read file: %s", err)
+		return 1
+	}
+	log.Infof("Decrypted data:%s", spew.Sdump(clear))
+
+	var prettyJSON bytes.Buffer
+	error := json.Indent(&prettyJSON, clear, "", "\t")
+	if error != nil {
+		log.Println("JSON parse error: ", error)
+		return 1
+	}
+
+	fmt.Printf("%s", prettyJSON.String())
 	return 0
 
 }
